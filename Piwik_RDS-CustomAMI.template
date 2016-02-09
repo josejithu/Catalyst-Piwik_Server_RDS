@@ -1,0 +1,209 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "AWS CloudFormation  Template PIWIK_Single_Instance_With_RDS: Create a PIWIK stack using a single EC2 instance from a custom AMI  and an Amazon RDS database instance for the backend data store. ",
+
+  "Parameters" : {
+
+    "KeyName" : {
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type" : "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+      "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+    },
+
+    "DBName": {
+      "Default": "piwikdb",
+      "Description" : "MySQL database name",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+    },
+
+    "DBUsername": {
+      "NoEcho": "false",
+      "Default": "piwikadmin",
+      "Description" : "Username for MySQL database access",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "16",
+      "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+    },
+
+    "DBPassword": {
+      "NoEcho": "true",
+      "Default": "p1w1kc0nn",
+      "Description" : "Password for MySQL database access",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "41",
+      "AllowedPattern" : "[a-zA-Z0-9]*",
+      "ConstraintDescription" : "must contain only alphanumeric characters."
+    },
+
+    "DBAllocatedStorage": {
+      "Default": "10",
+      "Description" : "The size of the database (Gb)",
+      "Type": "Number",
+      "MinValue": "5",
+      "MaxValue": "1024",
+      "ConstraintDescription" : "must be between 5 and 1024Gb."
+    },
+
+    "DBInstanceClass": {
+      "Default": "db.t2.micro",
+      "Description" : "The database instance type",
+      "Type": "String",
+      "AllowedValues" : [ "db.t2.micro", "db.t2.small", "db.m1.small", "db.m1.medium"  ],
+      "ConstraintDescription" : "must select a valid database instance type."
+    },
+
+    "InstanceType" : {
+      "Description" : "WebServer EC2 instance type",
+      "Type" : "String",
+      "Default" : "t2.small",
+      "AllowedValues" : [ "t2.micro","t2.small","m1.medium"],
+      "ConstraintDescription" : "must be a valid EC2 instance type."
+    },
+    "SSHLocation" : {
+      "Description" : " The IP address range that can be used to SSH to the EC2 instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    }
+  },
+
+  "Mappings" : {
+    "AWSInstanceType2Arch" : {
+      "t2.small"    : { "Arch" : "HVM64" },
+      "m1.medium"   : { "Arch" : "HVM64" }
+
+    },
+
+    "AWSRegionArch2AMI" : {
+      "us-east-1"      : { "HVM64" : "ami-58371c32"  },
+        "ap-southeast-2" : { "64" : "ami-1a446379", "HVM64" : "ami-1a446379" }
+
+  }
+},
+
+  "Resources" : {
+
+    "WebServer": {
+      "Type": "AWS::EC2::Instance",
+      "Metadata" : {
+        "Comment1" : "Configure the bootstrap helpers to install the Apache Web Server and PHP",
+        "Comment2" : "The website content is downloaded from the CloudFormationPHPSample.zip file",
+
+        "AWS::CloudFormation::Init" : {
+          "configSets" : {
+            "InstallAndRun" : [ "Install", "Configure" ]
+          },
+		  
+		  "Install" : {
+		    "packages" : {
+              		"apt" : {
+                		"apache2"   : []
+              		}
+			},
+			
+			"services" : {
+              "sysvinit" : {
+                "apache2" : { "enabled" : "true", "ensureRunning" : "true" },
+                "cfn-hup" : { "enabled" : "true", "ensureRunning" : "true"}
+              }
+             }
+		},
+	"Configure" : {
+             "commands" : {
+              "01" : {
+                "command" : "echo 'REPLACE_WITH_DBHOSTNAME' > /bin/MySQL_DB_Hostname\n"
+                },
+              "02" : {
+		"command" : { "Fn::Join" : ["", ["sed -i \"s/REPLACE_WITH_DBHOSTNAME/", {"Fn::GetAtt" : ["MySQLDatabase", "Endpoint.Address"] }, "/g\" /bin/MySQL_DB_Hostname\n"]]}
+		}
+            }
+           }
+          }
+      },
+      "Properties": {
+        "ImageId" : { "Fn::FindInMap" : [ "AWSRegionArch2AMI", { "Ref" : "AWS::Region" },
+                          { "Fn::FindInMap" : [ "AWSInstanceType2Arch", { "Ref" : "InstanceType" }, "Arch" ] } ] },
+        "InstanceType"   : { "Ref" : "InstanceType" },
+        "SecurityGroups" : [ {"Ref" : "WebServerSecurityGroup"} ],
+        "KeyName"        : { "Ref" : "KeyName" },
+                "UserData": { "Fn::Base64" : {"Fn::Join": ["", [
+            "#!/bin/bash -xe\n",
+            "apt-get update\n",
+            "apt-get -y install python-pip\n",
+            "pip install 'requests[security]'\n",
+            "pip install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz\n",
+            "cp /usr/local/init/ubuntu/cfn-hup /etc/init.d/cfn-hup \n",
+            "chmod +x /etc/init.d/cfn-hup \n",
+            "update-rc.d cfn-hup defaults \n ",
+            "service cfn-hup start \n",
+            "cfn-init -v ", " --stack ", {"Ref": "AWS::StackName" }, " --resource WebServer ", " --configsets InstallAndRun ", " --region ", { "Ref": "AWS::Region" }, "\n",
+
+            "cfn-signal -e $? ", "  --stack ", { "Ref": "AWS::StackName" }, " --resource WebServer ", " --region ", { "Ref": "AWS::Region" }, "\n"
+        ]]  }}
+		},
+      "CreationPolicy" : {
+        "ResourceSignal" : {
+          "Timeout" : "PT3M"
+     	   }
+     	 }		
+	},
+
+    "WebServerSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable HTTP access via port 80",
+        "SecurityGroupIngress" : [
+          {"IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80", "CidrIp" : "0.0.0.0/0"},
+                  {"IpProtocol" : "tcp", "FromPort" : "3306", "ToPort" : "3306", "CidrIp" : "0.0.0.0/0"},
+          {"IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : { "Ref" : "SSHLocation"}}
+        ]
+      }
+    },
+
+    "DBSecurityGroup": {
+      "Type": "AWS::RDS::DBSecurityGroup",
+      "Properties": {
+        "GroupDescription": "Grant database access to web server",
+        "DBSecurityGroupIngress": {
+          "EC2SecurityGroupName": { "Ref": "WebServerSecurityGroup" }
+        }
+      }
+    },
+
+    "MySQLDatabase": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "Engine" : "MySQL",
+        "DBName" : { "Ref": "DBName" },
+        "MultiAZ" : "false",
+        "MasterUsername": { "Ref": "DBUsername" },
+        "MasterUserPassword": { "Ref" : "DBPassword" },
+        "DBInstanceClass": { "Ref" : "DBInstanceClass" },
+        "DBSecurityGroups": [ { "Ref": "DBSecurityGroup" } ],
+        "AllocatedStorage": { "Ref" : "DBAllocatedStorage" }
+      }
+    }
+  },
+
+  "Outputs" : {
+    "WebsiteURL" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "WebServer", "PublicDnsName" ]}, "/piwik" ]] },
+      "Description" : "URL for newly created Piwik stack"
+    }
+  }
+}
+

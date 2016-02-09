@@ -1,0 +1,20 @@
+#!/bin/sh
+
+#Variables
+PUBDNS=`curl http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null` ;
+DB_HOST=`/bin/cat /bin/MySQL_DB_Hostname`;
+
+
+#Export MySQL DB
+mysql -u piwikadmin -pp1w1kc0nn -h $DB_HOST piwikdb < /root/Piwik_Config_files/piwik_db_dump.sql
+
+#Update MySQL Tables
+mysql -u piwikadmin -pp1w1kc0nn -h $DB_HOST piwikdb -e "update piwik_site set name = '$PUBDNS';"
+mysql -u piwikadmin -pp1w1kc0nn -h $DB_HOST piwikdb -e "update piwik_site set main_url = 'http://$PUBDNS';"
+mysql -u piwikadmin -pp1w1kc0nn -h $DB_HOST piwikdb -e "update piwik_log_action set name  = '$PUBDNS/index.php'  where type =1;"
+mysql -u piwikadmin -pp1w1kc0nn -h $DB_HOST piwikdb -e "update piwik_option set option_value = 'http://$PUBDNS/piwik' where option_name like '%piwikUrl%';" 
+
+#Restart Apache
+service apache2 restart
+sleep 5
+exit 0;
